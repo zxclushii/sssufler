@@ -1,5 +1,10 @@
-node_modules/
-config.json
-workspace/
-.launch.ps1
-whisper/
+/node_modules/
+/config.json
+/config.json.tmp
+/config.bad.json
+/claude-prompt.txt
+/workspace/
+/whisper/
+/logs/
+/src-tauri/target/
+/src-tauri/gen/

@@ -1,0 +1,46 @@
+name: Windows portable
+on: [push, pull_request]
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: Rust 1.100.0
+        run: rustup show active-toolchain
+      - name: Format
+        working-directory: src-tauri
+        run: cargo fmt --check
+      - name: Clippy
+        working-directory: src-tauri
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Rust and Windows integration tests
+        working-directory: src-tauri
+        run: cargo test --locked
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --version 0.23.0 --locked
+      - name: Audit
+        working-directory: src-tauri
+        run: cargo audit
+      - name: UI tests
+        run: node --test ui/
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version 2.12.6 --locked
+      - name: Build portable executable
+        run: cargo tauri build --ci -- --locked
+      - name: Stage portable zip contents
+        shell: pwsh
+        run: |
+          $dest = New-Item -ItemType Directory -Path (Join-Path $env:RUNNER_TEMP 'suflyor-windows-x64')
+          Copy-Item src-tauri/target/release/suflyor.exe, README.md -Destination $dest
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: suflyor-windows-x64
+          path: ${{ runner.temp }}/suflyor-windows-x64/
+          if-no-files-found: error

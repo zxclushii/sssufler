@@ -1,0 +1,11 @@
+{
+  "identifier": "main-local",
+  "description": "Подписка основного окна на события Суфлёра",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
+  ]
+}

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>Суфлёр</title>
-<link rel="stylesheet" href="../node_modules/@xterm/xterm/css/xterm.css">
+<link rel="stylesheet" href="vendor/xterm.css">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -93,17 +93,17 @@
           </select>
         </label>
         <label>Пауза конца фразы <output data-for="silenceMs"></output>
-          <input name="silenceMs" type="range" min="300" max="2000" step="50">
+          <input name="silenceMs" type="range" min="200" max="4000" step="50">
         </label>
         <label>Чувствительность <output data-for="sensitivity"></output>
-          <input name="sensitivity" type="range" min="0.5" max="4" step="0.1">
+          <input name="sensitivity" type="range" min="0.2" max="6" step="0.1">
         </label>
       </div>
 
       <div class="group">
         <h3>Окно</h3>
         <label>Прозрачность <output data-for="opacity"></output>
-          <input name="opacity" type="range" min="0.4" max="1" step="0.01">
+          <input name="opacity" type="range" min="0.3" max="1" step="0.01">
         </label>
         <label>Размер шрифта терминала <input name="fontSize" type="number" min="9" max="30"></label>
       </div>
@@ -112,6 +112,7 @@
         <h3>Claude Code</h3>
         <label>Команда <input name="claudeCommand" spellcheck="false"></label>
         <label>Аргументы <input name="claudeArgs" spellcheck="false"></label>
+        <label class="check"><input type="checkbox" name="webSearch"> Разрешить веб-поиск</label>
         <label>Системный промпт <textarea name="systemPrompt" rows="5"></textarea></label>
         <label>Шаблон сообщения, {text} заменится на речь <input name="messageTemplate" spellcheck="false"></label>
       </div>
@@ -126,10 +127,11 @@
   </div>
 </div>
 
-<script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>
-<script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
-<script src="speech.js"></script>
-<script src="audio.js"></script>
+<script src="vendor/xterm.js"></script>
+<script src="vendor/addon-fit.js"></script>
+<script src="text.js"></script>
+<script src="api.js"></script>
+<script src="sender.js"></script>
 <script src="renderer.js"></script>
 </body>
 </html>
