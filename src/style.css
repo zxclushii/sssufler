@@ -1,0 +1,439 @@
+:root {
+  --bg: #181818;
+  --bg2: #1f1f1f;
+  --border: #2b2b2b;
+  --fg: #cccccc;
+  --muted: #9d9d9d;
+  --dim: #6e6e6e;
+  --accent: #0078d4;
+  --accent-hover: #026ec1;
+  --input: #313131;
+  --input-border: #3c3c3c;
+  --hover: rgba(90, 93, 94, 0.31);
+  --green: #2ea043;
+  --red: #f85149;
+  --blue: #3794ff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px "Segoe UI", system-ui, -apple-system, sans-serif;
+  overflow: hidden;
+  user-select: none;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  border: 1px solid var(--border);
+}
+
+#bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 35px;
+  padding: 0 4px 0 8px;
+  -webkit-app-region: drag;
+  flex: none;
+}
+
+.tabs {
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  font-size: 11px;
+  letter-spacing: 0.2px;
+  color: var(--muted);
+  white-space: nowrap;
+  position: relative;
+}
+
+.tab.active {
+  color: #e7e7e7;
+}
+
+.tab.active::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 4px;
+  height: 1px;
+  background: var(--accent);
+}
+
+@media (max-width: 760px) {
+  .tab.wide.extra {
+    display: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .tab.wide {
+    display: none;
+  }
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.term-name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--fg);
+  font-size: 12px;
+  margin-right: 6px;
+}
+
+.term-name svg,
+.icon svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  -webkit-app-region: no-drag;
+}
+
+.icon {
+  width: 26px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.icon:hover {
+  background: var(--hover);
+}
+
+.icon.on {
+  color: #ffffff;
+  background: rgba(0, 120, 212, 0.35);
+}
+
+#btn-listen.on {
+  background: rgba(46, 160, 67, 0.35);
+}
+
+.icon.close:hover {
+  background: #c42b1c;
+  color: #fff;
+}
+
+#feed {
+  flex: none;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg2);
+  padding: 4px 10px 5px;
+}
+
+#status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 20px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+#status-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+#status-text:not(.err) {
+  flex: none;
+}
+
+#status-text.err {
+  color: var(--red);
+}
+
+#dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--dim);
+}
+
+#dot.on {
+  background: var(--green);
+}
+
+#dot.speech {
+  background: #3fb950;
+  box-shadow: 0 0 0 3px rgba(63, 185, 80, 0.25);
+}
+
+#dot.busy {
+  background: var(--blue);
+  animation: pulse 0.9s ease-in-out infinite;
+}
+
+#dot.err {
+  background: var(--red);
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+#meter {
+  flex: 1 1 40px;
+  min-width: 30px;
+  height: 3px;
+  background: #2a2a2a;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+#meter i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--green);
+  transition: width 60ms linear;
+}
+
+.chip {
+  border: 1px solid var(--input-border);
+  background: transparent;
+  color: var(--muted);
+  border-radius: 10px;
+  padding: 0 8px;
+  height: 18px;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex: none;
+}
+
+.chip:hover {
+  color: var(--fg);
+  border-color: var(--dim);
+}
+
+#lines {
+  max-height: 74px;
+  overflow-y: auto;
+  font: 12px/18px "Cascadia Mono", Consolas, "Courier New", monospace;
+  user-select: text;
+}
+
+#lines:empty::before {
+  content: "тут появится расшифровка речи собеседника";
+  color: var(--dim);
+}
+
+.line {
+  display: flex;
+  gap: 8px;
+  color: var(--muted);
+}
+
+.line time {
+  color: var(--dim);
+  flex: none;
+}
+
+.line.pending span {
+  color: #e7e7e7;
+}
+
+.line.sent span {
+  color: var(--muted);
+}
+
+.line.sent::after {
+  content: "→ claude";
+  color: var(--accent);
+  flex: none;
+  margin-left: auto;
+  padding-left: 8px;
+}
+
+#term {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 4px 0 0 10px;
+  background: var(--bg);
+}
+
+#term .xterm {
+  height: 100%;
+}
+
+#term .xterm-viewport {
+  background-color: var(--bg) !important;
+}
+
+#term .xterm-viewport::-webkit-scrollbar {
+  width: 10px;
+}
+
+#term .xterm-viewport::-webkit-scrollbar-thumb {
+  background: rgba(121, 121, 121, 0.4);
+}
+
+#settings {
+  position: absolute;
+  inset: 36px 1px 1px 1px;
+  background: var(--bg);
+  overflow-y: auto;
+  z-index: 10;
+  user-select: text;
+}
+
+#settings[hidden] {
+  display: none;
+}
+
+#form {
+  padding: 12px 16px 16px;
+  max-width: 640px;
+}
+
+#form h2 {
+  font-size: 18px;
+  font-weight: 400;
+  margin: 0 0 10px;
+}
+
+.group {
+  margin: 0 0 12px;
+}
+
+.group h3 {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 10px 0 6px;
+}
+
+#form label {
+  display: block;
+  margin: 0 0 8px;
+  color: var(--fg);
+}
+
+#form output {
+  color: var(--muted);
+  margin-left: 4px;
+}
+
+#form input:not([type="range"]),
+#form select,
+#form textarea {
+  display: block;
+  width: 100%;
+  margin-top: 3px;
+  padding: 4px 6px;
+  background: var(--input);
+  border: 1px solid var(--input-border);
+  border-radius: 2px;
+  color: var(--fg);
+  font: 13px "Segoe UI", system-ui, sans-serif;
+  outline: none;
+}
+
+#form textarea {
+  resize: vertical;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+}
+
+#form input:focus,
+#form select:focus,
+#form textarea:focus {
+  border-color: var(--accent);
+}
+
+#form input[type="range"] {
+  display: block;
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.buttons button {
+  border: 1px solid var(--input-border);
+  background: var(--input);
+  padding: 4px 12px;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.buttons button:hover {
+  background: #3c3c3c;
+}
+
+.buttons .primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.buttons .primary:hover {
+  background: var(--accent-hover);
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 0 0 10px;
+}
+
+.hint a {
+  color: #4daafc;
+}
+
+.keys {
+  margin-top: 12px;
+}
