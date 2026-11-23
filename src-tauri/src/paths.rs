@@ -35,38 +35,41 @@ pub(crate) fn data_dir() -> Result<(PathBuf, Vec<String>)> {
 
 #[cfg(windows)]
 pub(crate) fn log(dir: &Path) -> Result<()> {
+    use io::{Seek, SeekFrom};
+    const LIMIT: usize = 5 * 1024 * 1024;
     let path = dir.join("logs/suflyor.log");
-    // Truncate on startup and enforce the same cap throughout a long session.
     struct Capped {
         file: fs::File,
         bytes: u64,
     }
     impl io::Write for Capped {
         fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-            use io::Seek;
-            if self.bytes + bytes.len() as u64 > 5 * 1024 * 1024 {
+            if self.bytes.saturating_add(bytes.len() as u64) > LIMIT as u64 {
                 self.file.set_len(0)?;
                 self.file.rewind()?;
                 self.bytes = 0;
             }
-            let written = self.file.write(bytes)?;
+            let skipped = bytes.len().saturating_sub(LIMIT);
+            let written = self.file.write(&bytes[skipped..])?;
             self.bytes += written as u64;
-            Ok(written)
+            Ok(skipped + written)
         }
         fn flush(&mut self) -> io::Result<()> {
             self.file.flush()
         }
     }
-    let file = fs::OpenOptions::new()
+    // An append-only Windows handle cannot shorten the file when it hits the cap.
+    let mut file = fs::OpenOptions::new()
         .create(true)
-        .append(true)
+        .write(true)
+        .truncate(false)
         .open(&path)
         .with_context(|| format!("не открыл {}", path.display()))?;
-    let mut bytes = file.metadata()?.len();
-    if bytes >= 5 * 1024 * 1024 {
-        file.set_len(0)?;
-        bytes = 0;
+    if file.metadata()?.len() >= LIMIT as u64 {
+        file.set_len(0)
+            .with_context(|| format!("не очистил {}", path.display()))?;
     }
+    let bytes = file.seek(SeekFrom::End(0))?;
     tracing_subscriber::fmt()
         .with_ansi(false)
         .with_writer(std::sync::Mutex::new(Capped { file, bytes }))

@@ -16,6 +16,10 @@ if ($LASTEXITCODE -ne 0) { throw 'Could not compile the terminal fixture' }
 $config = Join-Path $runDir 'config.json'
 $promptPath = Join-Path $runDir 'claude-prompt.txt'
 $marker = Join-Path $runDir 'workspace/launch.txt'
+$logs = New-Item -ItemType Directory -Path (Join-Path $runDir 'logs')
+$logPath = Join-Path $logs 'suflyor.log'
+$fullLog = [IO.File]::Create($logPath)
+try { $fullLog.SetLength(5MB) } finally { $fullLog.Dispose() }
 
 function Assert-TerminalLaunch($process, [string[]]$expected) {
     $deadline = [datetime]::UtcNow.AddSeconds(60)
@@ -52,6 +56,7 @@ $missing = $null
 try {
     $first = Start-Process -FilePath $exe -WorkingDirectory $runDir -PassThru
     Assert-TerminalLaunch $first ($baseArgs + @(''))
+    if ((Get-Item $logPath).Length -ge 5MB) { throw 'The previous session log was not truncated' }
     if ([IO.File]::ReadAllText($promptPath) -ne 'portable smoke') { throw 'The portable app did not load the configured prompt' }
 
     $second = Start-Process -FilePath $exe -WorkingDirectory $runDir -PassThru
