@@ -180,7 +180,58 @@ async fn ui_ready(app: AppHandle, s: State<'_, Runtime>) -> Reply<()> {
     }
     Ok(())
 }
-pub(crate) fn run() -> Result<()> {
+fn setup(app: &mut tauri::App) -> Result<()> {
+    let (dir, mut warnings) = paths::data_dir()?;
+    paths::log(&dir)?;
+    let (cfg, mut config_warnings) = Config::load(&dir)?;
+    warnings.append(&mut config_warnings);
+    let handle = app.handle().clone();
+    let engine = Engine::new(handle.clone(), dir.clone(), cfg.clone())?;
+    let queue = Queue::new(handle.clone(), engine.clone())?;
+    let audio = Audio::new(handle.clone(), queue)?;
+    let saved = cfg.bounds.clone();
+    warnings.extend(hotkeys::register(&handle));
+    for w in &warnings {
+        tracing::warn!("{w}");
+    }
+    app.manage(Runtime {
+        dir,
+        cfg: Mutex::new(cfg),
+        warnings: Mutex::new(warnings),
+        engine,
+        audio,
+        sessions: Default::default(),
+        pinned: AtomicBool::new(true),
+        ready: AtomicBool::new(false),
+    });
+    let win = window::create(app, saved.as_ref())?;
+    let events = win.clone();
+    win.on_window_event(move |ev| {
+        let state = handle.state::<Runtime>();
+        match ev {
+            WindowEvent::Focused(false) if state.pinned.load(Ordering::Relaxed) => {
+                if let Err(e) = events.set_always_on_top(true) {
+                    warn(&handle, &format!("не закрепил окно: {e}"));
+                }
+            }
+            WindowEvent::CloseRequested { .. } => {
+                let mut cfg = state.cfg.lock().unwrap_or_else(|e| e.into_inner());
+                let result = window::bounds(&events).and_then(|b| {
+                    cfg.bounds = Some(b);
+                    cfg.save(&state.dir)
+                });
+                if let Err(e) = result {
+                    warn(&handle, &format!("{e:#}"));
+                }
+            }
+            _ => {}
+        }
+    });
+    window::show(&win)?;
+    Ok(())
+}
+
+pub(crate) fn run() -> Result<i32> {
     // Alacritty always merges the process environment; remove terminal markers before starting threads.
     std::env::remove_var("TERM_PROGRAM");
     std::env::remove_var("TERM_PROGRAM_VERSION");
@@ -207,58 +258,16 @@ pub(crate) fn run() -> Result<()> {
             ui_ready
         ])
         .setup(|app| {
-            let (dir, mut warnings) = paths::data_dir()?;
-            paths::log(&dir)?;
-            let (cfg, mut config_warnings) = Config::load(&dir)?;
-            warnings.append(&mut config_warnings);
-            let handle = app.handle().clone();
-            let engine = Engine::new(handle.clone(), dir.clone(), cfg.clone())?;
-            let queue = Queue::new(handle.clone(), engine.clone())?;
-            let audio = Audio::new(handle.clone(), queue)?;
-            let saved = cfg.bounds.clone();
-            warnings.extend(hotkeys::register(&handle));
-            for w in &warnings {
-                tracing::warn!("{w}");
+            // Tauri panics on a setup-hook error before run() can report it.
+            if let Err(err) = setup(app) {
+                paths::startup_error(&format!("{err:#}"));
+                app.handle().exit(1);
             }
-            app.manage(Runtime {
-                dir,
-                cfg: Mutex::new(cfg),
-                warnings: Mutex::new(warnings),
-                engine,
-                audio,
-                sessions: Default::default(),
-                pinned: AtomicBool::new(true),
-                ready: AtomicBool::new(false),
-            });
-            let win = window::create(app, saved.as_ref())?;
-            let events = win.clone();
-            win.on_window_event(move |ev| {
-                let state = handle.state::<Runtime>();
-                match ev {
-                    WindowEvent::Focused(false) if state.pinned.load(Ordering::Relaxed) => {
-                        if let Err(e) = events.set_always_on_top(true) {
-                            warn(&handle, &format!("не закрепил окно: {e}"));
-                        }
-                    }
-                    WindowEvent::CloseRequested { .. } => {
-                        let mut cfg = state.cfg.lock().unwrap_or_else(|e| e.into_inner());
-                        let result = window::bounds(&events).and_then(|b| {
-                            cfg.bounds = Some(b);
-                            cfg.save(&state.dir)
-                        });
-                        if let Err(e) = result {
-                            warn(&handle, &format!("{e:#}"));
-                        }
-                    }
-                    _ => {}
-                }
-            });
-            window::show(&win)?;
             Ok(())
         })
         .build(tauri::generate_context!())
         .map_err(|e| anyhow!("не запустил Суфлёр: {e}"))?;
-    app.run(|app, event| {
+    Ok(app.run_return(|app, event| {
         if matches!(event, tauri::RunEvent::Exit) {
             if let Some(s) = app.try_state::<Runtime>() {
                 s.audio.shutdown();
@@ -268,6 +277,5 @@ pub(crate) fn run() -> Result<()> {
                 }
             }
         }
-    });
-    Ok(())
+    }))
 }

@@ -22,9 +22,14 @@ mod window;
 
 #[cfg(windows)]
 fn main() {
-    if let Err(err) = commands::run() {
-        paths::startup_error(&format!("{err:#}"));
-    }
+    let status = match commands::run() {
+        Ok(status) => status,
+        Err(err) => {
+            paths::startup_error(&format!("{err:#}"));
+            1
+        }
+    };
+    std::process::exit(status);
 }
 
 #[cfg(not(windows))]

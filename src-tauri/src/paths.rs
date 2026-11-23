@@ -74,22 +74,40 @@ pub(crate) fn log(dir: &Path) -> Result<()> {
         .map_err(|err| anyhow::anyhow!("не включил лог: {err}"))
 }
 
-// Windows 1809 includes msg.exe. A GUI-subsystem binary has no console on double click.
 #[cfg(windows)]
 pub(crate) fn startup_error(detail: &str) {
-    use std::os::windows::process::CommandExt;
-    let message=format!("Суфлёр не запустился.\n{detail}\nWebView2 Runtime: https://developer.microsoft.com/microsoft-edge/webview2/");
+    use std::{io::Write, os::windows::process::CommandExt, process::Command};
+    let message = format!(
+        "Суфлёр не запустился.\r\n{detail}\r\nWebView2 Runtime: https://developer.microsoft.com/microsoft-edge/webview2/"
+    );
     tracing::error!(%message);
-    let system = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
+    let system =
+        PathBuf::from(std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into()))
+            .join("System32");
     let user = std::env::var_os("USERNAME").unwrap_or_else(|| "console".into());
-    if let Err(err) = std::process::Command::new(PathBuf::from(system).join("System32/msg.exe"))
+    if Command::new(system.join("msg.exe"))
         .arg(user)
         .arg("/time:120")
         .arg(&message)
         .creation_flags(0x0800_0000)
-        .spawn()
+        .status()
+        .is_ok_and(|status| status.success())
     {
-        tracing::error!("не показал ошибку запуска: {err}");
+        return;
+    }
+    // Explorer supplies no stderr on a double click, and some installations cannot deliver MSG.
+    let fallback = || -> io::Result<()> {
+        let path = std::env::temp_dir().join(format!("suflyor-startup-{}.txt", std::process::id()));
+        let mut file = fs::File::create_new(&path)?;
+        file.write_all(b"\xef\xbb\xbf")?;
+        file.write_all(message.as_bytes())?;
+        drop(file);
+        // The editor must stay open after the failed application exits.
+        drop(Command::new(system.join("notepad.exe")).arg(path).spawn()?);
+        Ok(())
+    };
+    if let Err(e) = fallback() {
+        tracing::error!("не показал ошибку запуска: {e}");
     }
 }
 

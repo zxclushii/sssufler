@@ -300,14 +300,21 @@ mod tests {
     #[test]
     fn conpty_reports_cmd_output_and_exit() {
         let dir = crate::paths::test_dir();
+        // The runner can start CMD with an OEM code page that cannot represent Cyrillic.
+        // Keeping the payload in the batch also prevents the terminal title from satisfying the assertion.
+        fs::write(
+            dir.join("echo.cmd"),
+            "@echo off\r\nchcp 65001>nul || exit /b 1\r\necho привет\r\n",
+        )
+        .unwrap();
         let cmd = PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32/cmd.exe");
         let spec = Launch {
             program: format!("\"{}\"", cmd.display()),
-            args: vec!["/d".into(), "/c".into(), "echo привет".into()],
+            args: ["/d", "/s", "/c", "echo.cmd"].map(String::from).into(),
             escape: false,
         };
         let (code, output) = capture(spec, &dir);
-        assert_eq!(code, Some(0));
+        assert_eq!(code, Some(0), "{output:?}");
         assert!(output.contains("привет"), "{output:?}");
         fs::remove_dir_all(dir).unwrap();
     }
