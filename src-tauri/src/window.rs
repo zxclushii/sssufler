@@ -5,6 +5,26 @@ use tauri::{
     WebviewWindow, WebviewWindowBuilder,
 };
 
+pub(crate) fn check_webview_runtime() -> Result<()> {
+    let fixed = std::env::var_os("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER");
+    if let Some(folder) = fixed.filter(|s| !s.is_empty()) {
+        // WebView2 resolves a relative fixed-runtime folder from the application executable.
+        let exe = std::env::current_exe().context("не получил путь к suflyor.exe")?;
+        let dir = exe.parent().context("у exe нет родительской папки")?;
+        let runtime = dir.join(folder).join("msedgewebview2.exe");
+        anyhow::ensure!(
+            runtime.is_file(),
+            "не найден WebView2 Runtime: {}",
+            runtime.display()
+        );
+    } else {
+        let version = tauri::webview_version()
+            .map_err(|err| anyhow::anyhow!("не получил версию WebView2 Runtime: {err}"))?;
+        anyhow::ensure!(!version.trim().is_empty(), "не найден WebView2 Runtime");
+    }
+    Ok(())
+}
+
 pub(crate) fn main_window(app: &AppHandle) -> Result<WebviewWindow> {
     app.get_webview_window("main")
         .context("окно Суфлёра закрыто")

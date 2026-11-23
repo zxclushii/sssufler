@@ -232,6 +232,13 @@ fn setup(app: &mut tauri::App) -> Result<()> {
 }
 
 pub(crate) fn run() -> Result<i32> {
+    // Check before Tauri creates an event loop that may wait for an unavailable WebView.
+    if let Err(err) = window::check_webview_runtime() {
+        if let Err(log_err) = paths::data_dir().and_then(|(dir, _)| paths::log(&dir)) {
+            return Err(err.context(format!("не открыл журнал запуска: {log_err:#}")));
+        }
+        return Err(err);
+    }
     // Alacritty always merges the process environment; remove terminal markers before starting threads.
     std::env::remove_var("TERM_PROGRAM");
     std::env::remove_var("TERM_PROGRAM_VERSION");

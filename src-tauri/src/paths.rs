@@ -87,30 +87,33 @@ pub(crate) fn startup_error(detail: &str) {
     let system =
         PathBuf::from(std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into()))
             .join("System32");
-    let user = std::env::var_os("USERNAME").unwrap_or_else(|| "console".into());
-    if Command::new(system.join("msg.exe"))
-        .arg(user)
-        .arg("/time:120")
-        .arg(&message)
-        .creation_flags(0x0800_0000)
-        .status()
-        .is_ok_and(|status| status.success())
-    {
-        return;
-    }
-    // Explorer supplies no stderr on a double click, and some installations cannot deliver MSG.
-    let fallback = || -> io::Result<()> {
-        let path = std::env::temp_dir().join(format!("suflyor-startup-{}.txt", std::process::id()));
+    // Show the failure independently of the WebView and of the failed process's lifetime.
+    let show_note = || -> io::Result<()> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let name = format!("suflyor-startup-{}-{stamp}.txt", std::process::id());
+        let path = std::env::temp_dir().join(name);
         let mut file = fs::File::create_new(&path)?;
         file.write_all(b"\xef\xbb\xbf")?;
         file.write_all(message.as_bytes())?;
         drop(file);
-        // The editor must stay open after the failed application exits.
         drop(Command::new(system.join("notepad.exe")).arg(path).spawn()?);
         Ok(())
     };
-    if let Err(e) = fallback() {
-        tracing::error!("не показал ошибку запуска: {e}");
+    if let Err(err) = show_note() {
+        tracing::warn!("не открыл сообщение в Блокноте: {err}");
+        let user = std::env::var_os("USERNAME").unwrap_or_else(|| "console".into());
+        if let Err(err) = Command::new(system.join("msg.exe"))
+            .arg(user)
+            .arg("/time:120")
+            .arg(&message)
+            .creation_flags(0x0800_0000)
+            .spawn()
+        {
+            tracing::error!("не показал ошибку запуска: {err}");
+        }
     }
 }
 

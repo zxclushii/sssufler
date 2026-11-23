@@ -82,13 +82,15 @@ try {
     $start.WorkingDirectory = $runDir
     $start.EnvironmentVariables['WEBVIEW2_BROWSER_EXECUTABLE_FOLDER'] = $invalidRuntime.FullName
     $missing = [Diagnostics.Process]::Start($start)
-    if (-not $missing.WaitForExit(30000) -or $missing.ExitCode -eq 0) {
-        throw 'An unavailable WebView2 runtime did not produce a startup failure'
+    if (-not $missing.WaitForExit(30000)) {
+        throw "The app hung without WebView2 (PID $($missing.Id), window '$($missing.MainWindowTitle)')"
     }
+    if ($missing.ExitCode -eq 0) { throw 'The app reported success without WebView2' }
     $log = Get-Content (Join-Path $runDir 'logs/suflyor.log') -Raw
     if ($log -notmatch 'https://developer\.microsoft\.com/microsoft-edge/webview2/') {
         throw 'The startup error did not include the WebView2 installation link'
     }
+    if (-not $log.Contains($invalidRuntime.FullName)) { throw 'The error did not identify the missing fixed runtime' }
     Write-Output 'Unavailable WebView2 produced a startup error with the installation link.'
 } catch {
     Get-ChildItem (Join-Path $runDir 'logs') -Filter '*.log' -ErrorAction SilentlyContinue |
