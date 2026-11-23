@@ -6,7 +6,7 @@ use alacritty_terminal::{
 };
 use anyhow::{anyhow, bail, Context, Result};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::VecDeque,
     fs,
     io::{Read, Write},
     num::NonZeroU32,
@@ -54,10 +54,8 @@ fn open(spec: Launch, work: &Path, cols: u16, rows: u16) -> Result<tty::Pty> {
         shell: Some(Shell::new(spec.program, spec.args)),
         working_directory: Some(work.into()),
         drain_on_exit: true,
-        env: HashMap::from([
-            ("COLORTERM".into(), "truecolor".into()),
-            ("FORCE_COLOR".into(), "1".into()),
-        ]),
+        // With no overrides, CreateProcessW inherits the original Windows environment block.
+        env: Default::default(),
         escape_args: spec.escape,
     };
     tty::new(&opts, size(cols, rows), 0).context("не создал ConPTY")

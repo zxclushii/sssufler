@@ -232,7 +232,9 @@ fn setup(app: &mut tauri::App) -> Result<()> {
 }
 
 pub(crate) fn run() -> Result<i32> {
-    // Alacritty always merges the process environment; remove terminal markers before starting threads.
+    // Configure terminal inheritance before Tauri starts its worker threads.
+    std::env::set_var("COLORTERM", "truecolor");
+    std::env::set_var("FORCE_COLOR", "1");
     std::env::remove_var("TERM_PROGRAM");
     std::env::remove_var("TERM_PROGRAM_VERSION");
     let app = tauri::Builder::default()
