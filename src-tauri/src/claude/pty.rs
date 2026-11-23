@@ -6,7 +6,7 @@ use alacritty_terminal::{
 };
 use anyhow::{anyhow, bail, Context, Result};
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     fs,
     io::{Read, Write},
     num::NonZeroU32,
@@ -54,8 +54,10 @@ fn open(spec: Launch, work: &Path, cols: u16, rows: u16) -> Result<tty::Pty> {
         shell: Some(Shell::new(spec.program, spec.args)),
         working_directory: Some(work.into()),
         drain_on_exit: true,
-        // With no overrides, CreateProcessW inherits the original Windows environment block.
-        env: Default::default(),
+        env: HashMap::from([
+            ("COLORTERM".into(), "truecolor".into()),
+            ("FORCE_COLOR".into(), "1".into()),
+        ]),
         escape_args: spec.escape,
     };
     tty::new(&opts, size(cols, rows), 0).context("не создал ConPTY")
@@ -298,20 +300,19 @@ mod tests {
     #[test]
     fn conpty_reports_cmd_output_and_exit() {
         let dir = crate::paths::test_dir();
-        // Keep the batch ASCII and pass Cyrillic over CreateProcessW's Unicode command line.
-        // The prefix and suffix distinguish actual console output from the window title.
+        // The batch is ASCII. Its Unicode argument comes through the same CMD launcher as Claude.
+        let shim = dir.join("console-output.cmd");
         fs::write(
-            dir.join("echo.cmd"),
+            &shim,
             "@echo off\r\necho SUF-BEGIN-%~1-SUF-END\r\nexit /b 0\r\n",
         )
         .unwrap();
-        let cmd = PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32/cmd.exe");
-        let args = ["/d", "/s", "/c", "\"echo.cmd привет\""].map(String::from);
-        let spec = Launch {
-            program: format!("\"{}\"", cmd.display()),
-            args: args.into(),
-            escape: false,
+        let cfg = Config {
+            claude_args: "привет".into(),
+            ..Config::default()
         };
+        let windows = PathBuf::from(std::env::var_os("SystemRoot").unwrap());
+        let spec = launch(&shim, &cfg, &dir.join("prompt.txt"), &windows).unwrap();
         let (code, output) = capture(spec, &dir);
         assert_eq!(code, Some(0), "{output:?}");
         assert!(output.contains("SUF-BEGIN-привет-SUF-END"), "{output:?}");
@@ -336,7 +337,7 @@ foreach ($line in [IO.File]::ReadLines($file, [Text.Encoding]::UTF8)) {
 [Console]::WriteLine('END-OF-STREAM')
 [Console]::Out.Flush()"#;
         let powershell = PathBuf::from(std::env::var_os("SystemRoot").unwrap())
-            .join("System32/WindowsPowerShell/v1.0/powershell.exe");
+            .join(r"System32\WindowsPowerShell\v1.0\powershell.exe");
         let spec = Launch {
             program: format!("\"{}\"", powershell.display()),
             args: [
