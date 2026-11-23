@@ -39,6 +39,9 @@ jobs:
         run: |
           $dest = New-Item -ItemType Directory -Path (Join-Path $env:RUNNER_TEMP 'suflyor-windows-x64')
           Copy-Item src-tauri/target/release/suflyor.exe, README.md -Destination $dest
+      - name: Launch the packaged application twice
+        shell: pwsh
+        run: ./.github/scripts/smoke-portable.ps1 -Executable "$env:RUNNER_TEMP/suflyor-windows-x64/suflyor.exe"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: suflyor-windows-x64

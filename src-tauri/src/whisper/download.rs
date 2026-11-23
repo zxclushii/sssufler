@@ -59,6 +59,11 @@ const ARCHIVE: FileSpec = FileSpec {
     bytes: 8928640,
     hash: "6ba69e3482d7826214f90a6a9c84ca07782aec1e1d0c6a7c30c994fd5d816ccb",
 };
+// Sum of uncompressed entry lengths in the SHA-256-pinned release archives above.
+#[cfg(target_arch = "aarch64")]
+const UNPACKED_BYTES: u64 = 9_128_400;
+#[cfg(not(target_arch = "aarch64"))]
+const UNPACKED_BYTES: u64 = 23_147_520;
 const SILERO: &str = "ggml-silero-v6.2.0.bin";
 
 pub(crate) fn client(read_timeout: Duration) -> Result<Client> {
@@ -76,10 +81,13 @@ fn matches_hash(hash: Sha256, expected: &str) -> bool {
         .eq(expected.bytes())
 }
 
+fn storage_full(err: &io::Error) -> bool {
+    err.kind() == io::ErrorKind::StorageFull
+        || cfg!(windows) && matches!(err.raw_os_error(), Some(112 | 39))
+}
+
 fn disk(err: io::Error, bytes: u64) -> anyhow::Error {
-    if err.kind() == io::ErrorKind::StorageFull
-        || matches!(err.raw_os_error(), Some(112 | 39)) && cfg!(windows)
-    {
+    if storage_full(&err) {
         AppError::StorageFull(bytes.div_ceil(1048576).max(1)).into()
     } else {
         err.into()
@@ -172,7 +180,7 @@ async fn fetch(
     Ok(())
 }
 #[cfg(windows)]
-async fn cached_model(path: &Path, spec: Option<FileSpec>) -> Result<bool> {
+async fn cached_file(path: &Path, spec: Option<FileSpec>) -> Result<bool> {
     let path = path.to_owned();
     tokio::task::spawn_blocking(move || -> Result<bool> {
         let mut f = match File::open(&path) {
@@ -199,7 +207,7 @@ async fn cached_model(path: &Path, spec: Option<FileSpec>) -> Result<bool> {
         Ok(matches_hash(hash, spec.hash))
     })
     .await
-    .context("прервалась проверка модели")?
+    .context("прервалась проверка загруженного файла")?
 }
 
 #[cfg(windows)]
@@ -222,6 +230,62 @@ fn find_server(dir: &Path, depth: usize) -> Result<Option<PathBuf>> {
     Ok(None)
 }
 
+fn unpack_error(stderr: &str, probe: impl FnOnce() -> io::Result<()>) -> Option<AppError> {
+    let diagnostic = stderr.to_ascii_lowercase();
+    let explicit = [
+        "no space left",
+        "not enough space",
+        "not enough disk space",
+        "disk full",
+        "disk is full",
+    ]
+    .iter()
+    .any(|msg| diagnostic.contains(msg));
+    // Windows libarchive can report only "Write failed" for ERROR_DISK_FULL.
+    let write_error = [
+        "write failed",
+        "failed to write",
+        "can't write",
+        "can't create",
+        "cannot create",
+        "can't extend",
+        "truncate",
+        "file size could not be restored",
+    ]
+    .iter()
+    .any(|msg| diagnostic.contains(msg));
+    if explicit || write_error && probe().is_err_and(|e| storage_full(&e)) {
+        Some(AppError::StorageFull(UNPACKED_BYTES.div_ceil(1048576)))
+    } else {
+        None
+    }
+}
+
+#[cfg(windows)]
+fn probe_unpack_space(staging: &Path, archive: &Path) -> io::Result<()> {
+    use std::io::Seek;
+    fs::create_dir(staging)?;
+    let result = (|| {
+        let mut src = File::open(archive)?;
+        let mut dest = File::create_new(staging.join("space.tmp"))?;
+        // Reuse compressed archive bytes so NTFS compression cannot collapse a zero-filled probe.
+        let mut left = UNPACKED_BYTES;
+        while left > 0 {
+            src.rewind()?;
+            let copied = io::copy(&mut (&mut src).take(left), &mut dest)?;
+            if copied == 0 {
+                return Err(io::ErrorKind::UnexpectedEof.into());
+            }
+            left -= copied;
+        }
+        dest.sync_all()
+    })();
+    if let Err(e) = fs::remove_dir_all(staging) {
+        tracing::warn!(path=%staging.display(), "не удалил папку проверки места: {e}");
+    }
+    result
+}
+
 #[cfg(windows)]
 pub(super) async fn assets(
     dir: &Path,
@@ -240,32 +304,61 @@ pub(super) async fn assets(
             "https://github.com/ggml-org/whisper.cpp/releases/download/b5454/{}",
             ARCHIVE.name
         );
-        fetch(client, &url, &archive, Some(ARCHIVE), |n, t| {
-            progress("качаю Whisper", t.map(|v| 100 * n / v))
-        })
-        .await?;
+        if !cached_file(&archive, Some(ARCHIVE)).await? {
+            fetch(client, &url, &archive, Some(ARCHIVE), |n, t| {
+                progress("качаю Whisper", t.map(|v| 100 * n / v))
+            })
+            .await?;
+        }
         let temp = bin_dir.join(format!("unpack-{}", std::env::consts::ARCH));
         if temp.try_exists()? {
             fs::remove_dir_all(&temp).context("не очистил незавершённую распаковку")?;
         }
-        fs::create_dir_all(&temp)?;
+        fs::create_dir_all(&temp).map_err(|e| disk(e, UNPACKED_BYTES))?;
         progress("распаковываю Whisper", None);
         let sys = std::env::var_os("SystemRoot").context("нет SystemRoot")?;
         let mut cmd = tokio::process::Command::new(PathBuf::from(sys).join("System32/tar.exe"));
-        cmd.arg("-xf").arg(&archive).arg("-C").arg(&temp);
-        let mut tar = super::engine::job(cmd)?;
-        let status = tokio::time::timeout(Duration::from_secs(90), tar.wait())
-            .await
-            .context("истекло время распаковки Whisper")??;
-        if !status.success() {
-            bail!("tar.exe не распаковал {}: {status}", archive.display());
+        cmd.arg("-xf")
+            .arg(&archive)
+            .arg("-C")
+            .arg(&temp)
+            .env("LC_ALL", "C")
+            .stderr(std::process::Stdio::piped());
+        let tar = super::engine::job(cmd)?;
+        let output = tokio::time::timeout(
+            Duration::from_secs(90),
+            Box::into_pin(tar.wait_with_output()),
+        )
+        .await
+        .context("истекло время распаковки Whisper")??;
+        if !output.status.success() {
+            let diagnostic = String::from_utf8_lossy(&output.stderr);
+            // Release the partial output before measuring what a retry would need.
+            let cleared = fs::remove_dir_all(&temp);
+            if let Err(e) = &cleared {
+                tracing::warn!(path=%temp.display(), "не очистил незавершённую распаковку: {e}");
+            }
+            if let Some(error) = unpack_error(&diagnostic, || {
+                cleared?;
+                probe_unpack_space(&temp, &archive)
+            }) {
+                return Err(error.into());
+            }
+            bail!(
+                "tar.exe не распаковал {} ({}): {}",
+                archive.display(),
+                output.status,
+                diagnostic.trim()
+            );
         }
         let file = find_server(&temp, 3)?.context("в архиве нет whisper-server.exe")?;
         let relative = file.strip_prefix(&temp)?.to_owned();
         if pinned.try_exists()? {
             fs::remove_dir_all(&pinned)?;
         }
-        fs::rename(&temp, &pinned).context("не установил распакованный Whisper")?;
+        fs::rename(&temp, &pinned)
+            .map_err(|e| disk(e, UNPACKED_BYTES))
+            .context("не установил распакованный Whisper")?;
         remove_file(&archive).context("не удалил проверенный архив Whisper")?;
         pinned.join(relative)
     };
@@ -277,7 +370,7 @@ pub(super) async fn assets(
         if spec.is_none() {
             tracing::warn!(name, "модель вне таблицы SHA-256, проверяю только размер");
         }
-        if cached_model(&dest, spec).await? {
+        if cached_file(&dest, spec).await? {
             continue;
         }
         let repo = if name == SILERO {
@@ -337,6 +430,23 @@ mod tests {
         server.join().unwrap();
         assert!(!dest.with_extension("part").exists());
         (result, dest)
+    }
+    #[test]
+    fn unpack_classifies_disk_errors_and_preserves_other_failures() {
+        let needed = UNPACKED_BYTES.div_ceil(1048576);
+        let full = || Err(io::Error::from(io::ErrorKind::StorageFull));
+        assert!(
+            matches!(unpack_error("No space left on device", || panic!()), Some(AppError::StorageFull(mb)) if mb == needed)
+        );
+        assert!(
+            matches!(unpack_error("whisper.dll: Write failed", full), Some(AppError::StorageFull(mb)) if mb == needed)
+        );
+        assert!(unpack_error("whisper.dll: Write failed", || Ok(())).is_none());
+        assert!(unpack_error("Can't create file", || Err(
+            io::ErrorKind::PermissionDenied.into()
+        ))
+        .is_none());
+        assert!(unpack_error("Invalid archive", || panic!()).is_none());
     }
     #[tokio::test]
     async fn success_and_corruption() {

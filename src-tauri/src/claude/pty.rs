@@ -273,26 +273,8 @@ impl Sessions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn conpty_preserves_utf8_and_reports_exit() {
-        let dir = crate::paths::test_dir();
-        let phrase = "абвгдежзий".repeat(8);
-        let content = (0..1250)
-            .map(|_| format!("{phrase}\r\n"))
-            .collect::<String>();
-        fs::write(dir.join("russian.txt"), content).unwrap();
-        let cmd = PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32/cmd.exe");
-        let spec = Launch {
-            program: format!("\"{}\"", cmd.display()),
-            args: vec![
-                "/d".into(),
-                "/s".into(),
-                "/c".into(),
-                "\"chcp 65001>nul & echo привет & type russian.txt\"".into(),
-            ],
-            escape: false,
-        };
-        let mut pty = open(spec, &dir, 160, 32).unwrap();
+    fn capture(spec: Launch, dir: &Path) -> (Option<i32>, String) {
+        let mut pty = open(spec, dir, 160, 32).unwrap();
         let (tx, rx) = mpsc::channel();
         let mut bytes = Vec::new();
         let timer = tx.clone();
@@ -312,13 +294,74 @@ mod tests {
         stop.send(()).unwrap();
         watchdog.join().unwrap();
         drop(pty);
-        let output = String::from_utf8(bytes).unwrap();
+        (code, String::from_utf8(bytes).unwrap())
+    }
+
+    #[test]
+    fn conpty_reports_cmd_output_and_exit() {
+        let dir = crate::paths::test_dir();
+        let cmd = PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32/cmd.exe");
+        let spec = Launch {
+            program: format!("\"{}\"", cmd.display()),
+            args: vec!["/d".into(), "/c".into(), "echo привет".into()],
+            escape: false,
+        };
+        let (code, output) = capture(spec, &dir);
         assert_eq!(code, Some(0));
-        assert!(output.contains("привет"));
-        assert_eq!(output.matches('ж').count(), 10000);
+        assert!(output.contains("привет"), "{output:?}");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn conpty_preserves_100000_cyrillic_letters() {
+        let dir = crate::paths::test_dir();
+        let phrase = "абвгдежзий".repeat(8);
+        let content = (0..1250)
+            .map(|i| format!("{i:04} {phrase}\r\n"))
+            .collect::<String>();
+        fs::write(dir.join("russian.txt"), content).unwrap();
+        // Specify both encodings so the producer's locale cannot change the fixture.
+        let script = r#"$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+$file = (Get-Item -LiteralPath './russian.txt').FullName
+foreach ($line in [IO.File]::ReadLines($file, [Text.Encoding]::UTF8)) {
+    [Console]::WriteLine($line)
+}
+[Console]::WriteLine('END-OF-STREAM')
+[Console]::Out.Flush()"#;
+        let powershell = PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+            .join("System32/WindowsPowerShell/v1.0/powershell.exe");
+        let spec = Launch {
+            program: format!("\"{}\"", powershell.display()),
+            args: [
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                script,
+            ]
+            .map(String::from)
+            .into(),
+            escape: true,
+        };
+        let (code, output) = capture(spec, &dir);
+        let first: String = output.chars().take(180).collect();
+        let tail: String = output
+            .chars()
+            .rev()
+            .take(180)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        assert_eq!(code, Some(0), "{first:?} … {tail:?}");
+        assert!(output.contains("END-OF-STREAM"), "{first:?} … {tail:?}");
+        assert!(!output.contains(char::REPLACEMENT_CHARACTER));
         assert_eq!(
             output.chars().filter(|c| ('а'..='я').contains(c)).count(),
-            100006
+            100_000,
+            "{} bytes, {first:?} … {tail:?}",
+            output.len()
         );
         fs::remove_dir_all(dir).unwrap();
     }
