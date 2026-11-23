@@ -298,22 +298,23 @@ mod tests {
     #[test]
     fn conpty_reports_cmd_output_and_exit() {
         let dir = crate::paths::test_dir();
-        // The runner can start CMD with an OEM code page that cannot represent Cyrillic.
-        // Keeping the payload in the batch also prevents the terminal title from satisfying the assertion.
+        // Keep the batch ASCII and pass Cyrillic over CreateProcessW's Unicode command line.
+        // The prefix and suffix distinguish actual console output from the window title.
         fs::write(
             dir.join("echo.cmd"),
-            "@echo off\r\nchcp 65001>nul || exit /b 1\r\necho привет\r\n",
+            "@echo off\r\necho SUF-BEGIN-%~1-SUF-END\r\nexit /b 0\r\n",
         )
         .unwrap();
         let cmd = PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32/cmd.exe");
+        let args = ["/d", "/s", "/c", "\"echo.cmd привет\""].map(String::from);
         let spec = Launch {
             program: format!("\"{}\"", cmd.display()),
-            args: ["/d", "/s", "/c", "echo.cmd"].map(String::from).into(),
+            args: args.into(),
             escape: false,
         };
         let (code, output) = capture(spec, &dir);
         assert_eq!(code, Some(0), "{output:?}");
-        assert!(output.contains("привет"), "{output:?}");
+        assert!(output.contains("SUF-BEGIN-привет-SUF-END"), "{output:?}");
         fs::remove_dir_all(dir).unwrap();
     }
 

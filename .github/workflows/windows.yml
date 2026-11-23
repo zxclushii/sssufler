@@ -7,6 +7,10 @@ jobs:
   windows:
     runs-on: windows-latest
     timeout-minutes: 55
+    env:
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -23,27 +27,69 @@ jobs:
       - name: Rust and Windows integration tests
         working-directory: src-tauri
         run: cargo test --locked
-      - name: Install cargo-audit
-        run: cargo install cargo-audit --version 0.23.0 --locked
+      - name: Install pinned Cargo tools
+        shell: pwsh
+        run: |
+          $tools = @(
+            @{
+              Name = 'cargo-audit'
+              Url = 'https://github.com/rustsec/rustsec/releases/download/cargo-audit/v0.23.0/cargo-audit-x86_64-pc-windows-msvc-v0.23.0.zip'
+              Sha256 = 'aafeb61206730029601a72e669a12231f8674427e6248d02f6cb382cb36d56b4'
+            }
+            @{
+              Name = 'cargo-tauri'
+              Url = 'https://github.com/tauri-apps/tauri/releases/download/tauri-cli-v2.12.6/cargo-tauri-x86_64-pc-windows-msvc.zip'
+              Sha256 = '39636fa68bc00f13dd610fb57688f292e93742978cc35395f2f1be7c540b88a1'
+            }
+          )
+          foreach ($tool in $tools) {
+            $folder = Join-Path $env:RUNNER_TEMP $tool.Name
+            $archive = "$folder.zip"
+            Invoke-WebRequest -Uri $tool.Url -OutFile $archive
+            if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne $tool.Sha256) {
+              throw "SHA-256 mismatch for $($tool.Name)"
+            }
+            Expand-Archive -LiteralPath $archive -DestinationPath $folder
+            $bins = @(Get-ChildItem -LiteralPath $folder -Recurse -File -Filter "$($tool.Name).exe")
+            if ($bins.Count -ne 1) { throw "Expected one $($tool.Name).exe" }
+            Add-Content -LiteralPath $env:GITHUB_PATH -Value $bins[0].DirectoryName -Encoding utf8
+          }
       - name: Audit
         working-directory: src-tauri
         run: cargo audit
       - name: UI tests
         run: node --test ui/
-      - name: Install Tauri CLI
-        run: cargo install tauri-cli --version 2.12.6 --locked
       - name: Build portable executable
         run: cargo tauri build --ci -- --locked
-      - name: Stage portable zip contents
+      - name: Package and verify portable zip
         shell: pwsh
         run: |
-          $dest = New-Item -ItemType Directory -Path (Join-Path $env:RUNNER_TEMP 'suflyor-windows-x64')
-          Copy-Item src-tauri/target/release/suflyor.exe, README.md -Destination $dest
+          $dest = Join-Path $env:RUNNER_TEMP 'suflyor-windows-x64'
+          $archive = "$dest.zip"
+          $exe = 'src-tauri/target/release/suflyor.exe'
+          Compress-Archive -LiteralPath $exe, 'README.md' -DestinationPath $archive
+          $zip = [IO.Compression.ZipFile]::OpenRead($archive)
+          try {
+            $names = @($zip.Entries | ForEach-Object { $_.FullName })
+            if ($names.Count -ne 2 -or $names -cnotcontains 'suflyor.exe' -or $names -cnotcontains 'README.md') {
+              throw "Unexpected ZIP contents: $names"
+            }
+          } finally {
+            $zip.Dispose()
+          }
+          Expand-Archive -LiteralPath $archive -DestinationPath $dest
+          foreach ($src in @($exe, 'README.md')) {
+            $copy = Join-Path $dest (Split-Path $src -Leaf)
+            if ((Get-FileHash $src).Hash -ne (Get-FileHash $copy).Hash) {
+              throw "ZIP round trip changed $src"
+            }
+          }
+          Write-Output ("Portable ZIP SHA-256: " + (Get-FileHash $archive).Hash)
       - name: Launch the packaged application twice
         shell: pwsh
         run: ./.github/scripts/smoke-portable.ps1 -Executable "$env:RUNNER_TEMP/suflyor-windows-x64/suflyor.exe"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: suflyor-windows-x64
-          path: ${{ runner.temp }}/suflyor-windows-x64/
+          archive: false
+          path: ${{ runner.temp }}/suflyor-windows-x64.zip
           if-no-files-found: error
